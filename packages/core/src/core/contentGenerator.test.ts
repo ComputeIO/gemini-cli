@@ -129,4 +129,41 @@ describe('createContentGeneratorConfig', () => {
     expect(config.apiKey).toBeUndefined();
     expect(config.vertexai).toBeUndefined();
   });
+
+  it('should configure for Ollama', async () => {
+    process.env.OLLAMA_BASE_URL = 'http://localhost:11434';
+    const config = await createContentGeneratorConfig(
+      'deepseek-r1:latest',
+      AuthType.USE_OLLAMA,
+    );
+    expect(config.baseUrl).toBe('http://localhost:11434');
+    expect(config.provider).toBe('ollama');
+    expect(config.model).toBe('deepseek-r1:latest');
+  });
+
+  it('should configure for OpenAI', async () => {
+    process.env.OPENAI_API_KEY = 'sk-test-key';
+    process.env.OPENAI_BASE_URL = 'https://api.openai.com/v1';
+    const config = await createContentGeneratorConfig(
+      'gpt-4',
+      AuthType.USE_OPENAI,
+    );
+    expect(config.apiKey).toBe('sk-test-key');
+    expect(config.baseUrl).toBe('https://api.openai.com/v1');
+    expect(config.provider).toBe('openai');
+    expect(config.model).toBe('gpt-4');
+  });
+
+  it('should configure for custom OpenAI-compatible API', async () => {
+    process.env.CUSTOM_LLM_API_KEY = 'custom-key';
+    process.env.CUSTOM_LLM_BASE_URL = 'https://custom-api.example.com';
+    const config = await createContentGeneratorConfig(
+      'custom-model',
+      AuthType.USE_CUSTOM_OPENAI_COMPATIBLE,
+    );
+    expect(config.apiKey).toBe('custom-key');
+    expect(config.baseUrl).toBe('https://custom-api.example.com');
+    expect(config.provider).toBe('custom');
+    expect(config.model).toBe('custom-model');
+  });
 });

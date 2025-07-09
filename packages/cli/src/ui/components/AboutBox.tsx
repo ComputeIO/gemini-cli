@@ -32,7 +32,7 @@ export const AboutBox: React.FC<AboutBoxProps> = ({
     flexDirection="column"
     padding={1}
     marginY={1}
-    width="100%"
+    width={process.env.WIDTH || '100%'}
   >
     <Box marginBottom={1}>
       <Text bold color={Colors.AccentPurple}>

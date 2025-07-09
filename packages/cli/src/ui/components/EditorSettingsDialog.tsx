@@ -102,7 +102,7 @@ export function EditorSettingsDialog({
       borderColor={Colors.Gray}
       flexDirection="row"
       padding={1}
-      width="100%"
+      width={process.env.WIDTH || '100%'}
     >
       <Box flexDirection="column" width="45%" paddingRight={2}>
         <Text bold={focusedSection === 'editor'}>
