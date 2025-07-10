@@ -7,7 +7,7 @@ set -euo pipefail
   [[ -e "$tgz" ]] && {
     bin="bundle/gemini.sh"
     cat "$0" > "$bin"
-    echo "#${ver};$(base64 -w 0 "$tgz")" >> "$bin"
+    echo "#${ver};$(sha1sum bundle/gemini.js|awk '{print $1}');$(base64 -w 0 "$tgz")" >> "$bin"
     echo "Release embedded script for $ver at ${bin}."
     exit 0
   }
@@ -25,12 +25,18 @@ which npm &>/dev/null || {
   exit 1
 }
 
-which gemini &>/dev/null || {
-  ver=$(tail -n 1 "$0" | cut -c 2-64 | awk -F\; '{print $1}')
-  tgz="google-gemini-cli-${ver}.tgz"
-  let pos=3+${#ver} #...;
+ver=$(tail -n 1 "$0" | cut -c 2-64 | awk -F\; '{print $1}')
+sha=$(tail -n 1 "$0" | cut -c 2-64 | awk -F\; '{print $2}')
+tgz="google-gemini-cli-${ver}.tgz"
+let pos=2+${#ver}+1+${#sha}+1 #...;sha...;base64...
+old=""
+which gemini > /dev/null 2>&1 && old=$(sha1sum $(dirname $(which gemini))/../lib/node_modules/@google/gemini-cli/bundle/gemini.js | awk '{print $1}')
+
+[[ "$old" != "$sha" ]] && {
+  echo "Extracting gemini CLI ${ver} ..."
   tail -n 1 "$0" | cut -c ${pos}- | base64 -d > "${tgz}"
-  npm install -g --verbose "${tgz}" || rm -f "${tgz}" || :
+  npm install -g --verbose "${tgz}" || :
+  rm -f "${tgz}" || :
   which gemini &>/dev/null || {
     echo "gemini CLI installation failed. Please check the output above for errors."
     exit 1
