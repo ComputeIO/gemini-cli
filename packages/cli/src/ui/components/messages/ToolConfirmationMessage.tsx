@@ -95,6 +95,7 @@ export const ToolConfirmationMessage: React.FC<
           justifyContent="space-around"
           padding={1}
           overflow="hidden"
+          width={process.platform === 'win32' ? '48%' : '98%'}
         >
           <Text>Modify in progress: </Text>
           <Text color={Colors.AccentGreen}>
