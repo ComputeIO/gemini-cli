@@ -116,7 +116,7 @@ export function AuthDialog({
       borderColor={Colors.Gray}
       flexDirection="column"
       padding={1}
-      width="100%"
+      width={process.platform === 'win32' ? '48%' : '98%'}
     >
       <Text bold>Get started</Text>
       <Box marginTop={1}>

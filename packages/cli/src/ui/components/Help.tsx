@@ -19,6 +19,7 @@ export const Help: React.FC<Help> = ({ commands }) => (
     marginBottom={1}
     borderColor={Colors.Gray}
     borderStyle="round"
+    width={process.platform === 'win32' ? '48%' : '98%'}
     padding={1}
   >
     {/* Basics */}

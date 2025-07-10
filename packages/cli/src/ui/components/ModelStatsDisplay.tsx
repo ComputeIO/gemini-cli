@@ -59,6 +59,7 @@ export const ModelStatsDisplay: React.FC = () => {
         borderColor={Colors.Gray}
         paddingY={1}
         paddingX={2}
+        width={process.platform === 'win32' ? '48%' : '98%'}
       >
         <Text>No API calls have been made in this session.</Text>
       </Box>
@@ -86,6 +87,7 @@ export const ModelStatsDisplay: React.FC = () => {
       flexDirection="column"
       paddingY={1}
       paddingX={2}
+      width={process.platform === 'win32' ? '48%' : '98%'}
     >
       <Text bold color={Colors.AccentPurple}>
         Model Stats For Nerds
