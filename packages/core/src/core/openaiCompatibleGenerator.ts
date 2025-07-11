@@ -124,10 +124,52 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
   }
 
   /**
+   * Extract text from ContentUnion (which can be string, Content, Part, or arrays)
+   */
+  private extractTextFromContentUnion(content?: any): string | undefined {
+    if (!content) {
+      return undefined;
+    }
+    
+    if (typeof content === 'string') {
+      return content;
+    }
+    
+    if (Array.isArray(content)) {
+      // Array of parts
+      return content
+        .filter((part: any) => part && typeof part === 'object' && 'text' in part)
+        .map((part: any) => part.text)
+        .join('\n') || undefined;
+    }
+    
+    if (typeof content === 'object' && 'parts' in content) {
+      // Content object
+      return (content.parts || [])
+        .filter((part: any) => part && typeof part === 'object' && 'text' in part)
+        .map((part: any) => part.text)
+        .join('\n') || undefined;
+    }
+    
+    if (typeof content === 'object' && 'text' in content) {
+      // Single Part object
+      return content.text;
+    }
+    
+    return undefined;
+  }
+
+  /**
    * Convert Gemini Content format to OpenAI messages format
    */
-  private convertToOpenAIMessages(contents: ContentListUnion): OpenAIMessage[] {
+  private convertToOpenAIMessages(contents: ContentListUnion, systemInstruction?: string): OpenAIMessage[] {
     const messages: OpenAIMessage[] = [];
+    
+    // Add system instruction as the first message if provided
+    if (systemInstruction && systemInstruction.trim()) {
+      messages.push({ role: 'system', content: systemInstruction.trim() });
+    }
+    
     const normalizedContents = this.normalizeContents(contents);
 
     for (const content of normalizedContents) {
@@ -178,7 +220,10 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
   }
 
   async generateContent(request: GenerateContentParameters): Promise<GenerateContentResponse> {
-    const messages = this.convertToOpenAIMessages(request.contents);
+    // Extract system instruction from config
+    const systemInstruction = this.extractTextFromContentUnion(request.config?.systemInstruction);
+    
+    const messages = this.convertToOpenAIMessages(request.contents, systemInstruction);
 
     const openaiRequest = {
       model: request.model || this.model,
@@ -207,7 +252,10 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
   async generateContentStream(
     request: GenerateContentParameters,
   ): Promise<AsyncGenerator<GenerateContentResponse>> {
-    const messages = this.convertToOpenAIMessages(request.contents);
+    // Extract system instruction from config
+    const systemInstruction = this.extractTextFromContentUnion(request.config?.systemInstruction);
+    
+    const messages = this.convertToOpenAIMessages(request.contents, systemInstruction);
 
     const openaiRequest = {
       model: request.model || this.model,
@@ -289,7 +337,10 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
   }
 
   async countTokens(request: CountTokensParameters): Promise<CountTokensResponse> {
-    const messages = this.convertToOpenAIMessages(request.contents);
+    // Extract system instruction from config if available
+    const systemInstruction = this.extractTextFromContentUnion(request.config?.systemInstruction);
+    
+    const messages = this.convertToOpenAIMessages(request.contents, systemInstruction);
 
     // For OpenAI-compatible APIs, we estimate tokens based on character count
     // This is a rough approximation: ~4 characters per token for English text
