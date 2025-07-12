@@ -15,12 +15,33 @@ import {
   Part,
   ContentListUnion,
   FinishReason,
+  Tool,
+  FunctionCall,
 } from '@google/genai';
 import { ContentGenerator } from './contentGenerator.js';
 
 interface OpenAIMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: string | null;
+  tool_calls?: OpenAIToolCall[];
+}
+
+interface OpenAIToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+interface OpenAITool {
+  type: 'function';
+  function: {
+    name: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+  };
 }
 
 interface OpenAIResponse {
@@ -32,7 +53,8 @@ interface OpenAIResponse {
     index: number;
     message: {
       role: string;
-      content: string;
+      content: string | null;
+      tool_calls?: OpenAIToolCall[];
     };
     finish_reason: string;
   }>;
@@ -53,6 +75,7 @@ interface OpenAIStreamResponse {
     delta: {
       role?: string;
       content?: string;
+      tool_calls?: OpenAIToolCall[];
     };
     finish_reason?: string;
   }>;
@@ -97,7 +120,7 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
         parts: [{ text: contents }]
       }];
     }
-    
+
     if (Array.isArray(contents)) {
       // Check if it's an array of Content objects or Part objects
       if (contents.length > 0 && contents[0] && typeof contents[0] === 'object' && 'role' in contents[0]) {
@@ -110,12 +133,12 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
         }];
       }
     }
-    
+
     // Single Content object
     if ('role' in contents) {
       return [contents as Content];
     }
-    
+
     // Single Part object
     return [{
       role: 'user',
@@ -130,11 +153,11 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
     if (!content) {
       return undefined;
     }
-    
+
     if (typeof content === 'string') {
       return content;
     }
-    
+
     if (Array.isArray(content)) {
       // Array of parts
       return content
@@ -142,7 +165,7 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
         .map((part: any) => part.text)
         .join('\n') || undefined;
     }
-    
+
     if (typeof content === 'object' && 'parts' in content) {
       // Content object
       return (content.parts || [])
@@ -150,12 +173,12 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
         .map((part: any) => part.text)
         .join('\n') || undefined;
     }
-    
+
     if (typeof content === 'object' && 'text' in content) {
       // Single Part object
       return content.text;
     }
-    
+
     return undefined;
   }
 
@@ -164,12 +187,12 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
    */
   private convertToOpenAIMessages(contents: ContentListUnion, systemInstruction?: string): OpenAIMessage[] {
     const messages: OpenAIMessage[] = [];
-    
+
     // Add system instruction as the first message if provided
     if (systemInstruction && systemInstruction.trim()) {
       messages.push({ role: 'system', content: systemInstruction.trim() });
     }
-    
+
     const normalizedContents = this.normalizeContents(contents);
 
     for (const content of normalizedContents) {
@@ -196,13 +219,27 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
       throw new Error('No choices in OpenAI response');
     }
 
+    // Create parts array from content and tool calls
+    const parts: Part[] = [];
+
+    // Add text content if present
+    if (choice.message.content) {
+      parts.push({ text: choice.message.content });
+    }
+
+    // Add function calls if present
+    if (choice.message.tool_calls && choice.message.tool_calls.length > 0) {
+      const functionCallParts = this.convertOpenAIToolCallsToGemini(choice.message.tool_calls);
+      parts.push(...functionCallParts);
+    }
+
     // Create a basic response that matches the GenerateContentResponse structure
     const response = new GenerateContentResponse();
     response.candidates = [{
       index: choice.index,
       content: {
         role: 'model',
-        parts: [{ text: choice.message.content }]
+        parts: parts.length > 0 ? parts : [{ text: '' }]
       },
       finishReason: choice.finish_reason === 'stop' ? FinishReason.STOP : FinishReason.OTHER,
       safetyRatings: []
@@ -219,13 +256,74 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
     return response;
   }
 
+  /**
+   * Convert Gemini tools to OpenAI tools format
+   */
+  private convertGeminiToolsToOpenAI(tools?: Tool[]): OpenAITool[] | undefined {
+    if (!tools || !tools.length) {
+      return undefined;
+    }
+
+    const openaiTools: OpenAITool[] = [];
+    for (const tool of tools) {
+      if (tool.functionDeclarations) {
+        for (const funcDecl of tool.functionDeclarations) {
+          if (funcDecl.name) {
+            openaiTools.push({
+              type: 'function',
+              function: {
+                name: funcDecl.name,
+                description: funcDecl.description,
+                parameters: funcDecl.parameters as Record<string, unknown> | undefined,
+              },
+            });
+          }
+        }
+      }
+    }
+    return openaiTools.length > 0 ? openaiTools : undefined;
+  }
+
+  /**
+   * Convert OpenAI tool calls to Gemini function call parts
+   */
+  private convertOpenAIToolCallsToGemini(toolCalls: OpenAIToolCall[]): Part[] {
+    return toolCalls.map((toolCall) => {
+      let args: Record<string, unknown> = {};
+      try {
+        args = JSON.parse(toolCall.function.arguments);
+      } catch (e) {
+        // If arguments aren't valid JSON, leave as empty object
+      }
+
+      const functionCall: FunctionCall = {
+        name: toolCall.function.name,
+        args,
+        id: toolCall.id,
+      };
+
+      return { functionCall };
+    });
+  }
+
   async generateContent(request: GenerateContentParameters): Promise<GenerateContentResponse> {
     // Extract system instruction from config
     const systemInstruction = this.extractTextFromContentUnion(request.config?.systemInstruction);
-    
+
     const messages = this.convertToOpenAIMessages(request.contents, systemInstruction);
 
-    const openaiRequest = {
+    // Convert Gemini tools to OpenAI format
+    const requestTools = request.config?.tools;
+    let tools: OpenAITool[] | undefined;
+    if (requestTools && Array.isArray(requestTools)) {
+      // Filter to only Tool objects (not CallableTool)
+      const geminiTools = requestTools.filter((tool): tool is Tool =>
+        tool && typeof tool === 'object' && 'functionDeclarations' in tool
+      );
+      tools = this.convertGeminiToolsToOpenAI(geminiTools);
+    }
+
+    const openaiRequest: any = {
       model: request.model || this.model,
       messages,
       max_tokens: request.config?.maxOutputTokens || 4096,
@@ -233,6 +331,12 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
       top_p: request.config?.topP || 0.9,
       stream: false,
     };
+
+    // Only add tools if they exist
+    if (tools && tools.length > 0) {
+      openaiRequest.tools = tools;
+      openaiRequest.tool_choice = 'auto';
+    }
 
     const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
       method: 'POST',
@@ -254,10 +358,21 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
   ): Promise<AsyncGenerator<GenerateContentResponse>> {
     // Extract system instruction from config
     const systemInstruction = this.extractTextFromContentUnion(request.config?.systemInstruction);
-    
+
     const messages = this.convertToOpenAIMessages(request.contents, systemInstruction);
 
-    const openaiRequest = {
+    // Convert Gemini tools to OpenAI format
+    const requestTools = request.config?.tools;
+    let tools: OpenAITool[] | undefined;
+    if (requestTools && Array.isArray(requestTools)) {
+      // Filter to only Tool objects (not CallableTool)
+      const geminiTools = requestTools.filter((tool): tool is Tool =>
+        tool && typeof tool === 'object' && 'functionDeclarations' in tool
+      );
+      tools = this.convertGeminiToolsToOpenAI(geminiTools);
+    }
+
+    const openaiRequest: any = {
       model: request.model || this.model,
       messages,
       max_tokens: request.config?.maxOutputTokens || 4096,
@@ -265,6 +380,12 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
       top_p: request.config?.topP || 0.9,
       stream: true,
     };
+
+    // Only add tools if they exist
+    if (tools && tools.length > 0) {
+      openaiRequest.tools = tools;
+      openaiRequest.tool_choice = 'auto';
+    }
 
     const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
       method: 'POST',
@@ -309,21 +430,37 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
             try {
               const parsed: OpenAIStreamResponse = JSON.parse(data);
               const choice = parsed.choices[0];
-              if (choice?.delta?.content) {
-                const geminiResponse = new GenerateContentResponse();
-                geminiResponse.candidates = [{
-                  index: choice.index,
-                  content: {
-                    role: 'model',
-                    parts: [{ text: choice.delta.content }]
-                  },
-                  finishReason: choice.finish_reason === 'stop' ? FinishReason.STOP : 
-                               choice.finish_reason ? FinishReason.OTHER : undefined,
-                  safetyRatings: []
-                }];
-                geminiResponse.modelVersion = parsed.model;
+              if (choice?.delta) {
+                const parts: Part[] = [];
 
-                yield geminiResponse;
+                // Add text content if present
+                if (choice.delta.content) {
+                  parts.push({ text: choice.delta.content });
+                }
+
+                // Add function calls if present
+                if (choice.delta.tool_calls && choice.delta.tool_calls.length > 0) {
+                  const functionCallParts = this.convertOpenAIToolCallsToGemini(choice.delta.tool_calls);
+                  parts.push(...functionCallParts);
+                }
+
+                // Only yield if we have content
+                if (parts.length > 0) {
+                  const geminiResponse = new GenerateContentResponse();
+                  geminiResponse.candidates = [{
+                    index: choice.index,
+                    content: {
+                      role: 'model',
+                      parts
+                    },
+                    finishReason: choice.finish_reason === 'stop' ? FinishReason.STOP :
+                      choice.finish_reason ? FinishReason.OTHER : undefined,
+                    safetyRatings: []
+                  }];
+                  geminiResponse.modelVersion = parsed.model;
+
+                  yield geminiResponse;
+                }
               }
             } catch (e) {
               // Skip invalid JSON
@@ -339,7 +476,7 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
   async countTokens(request: CountTokensParameters): Promise<CountTokensResponse> {
     // Extract system instruction from config if available
     const systemInstruction = this.extractTextFromContentUnion(request.config?.systemInstruction);
-    
+
     const messages = this.convertToOpenAIMessages(request.contents, systemInstruction);
 
     // For OpenAI-compatible APIs, we estimate tokens based on character count
