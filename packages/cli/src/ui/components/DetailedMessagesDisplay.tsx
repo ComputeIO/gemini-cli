@@ -33,7 +33,7 @@ export const DetailedMessagesDisplay: React.FC<
       borderStyle="round"
       borderColor={Colors.Gray}
       paddingX={1}
-      width={process.platform === 'win32' ? '48%' : width}
+      width={process.env.WIDTH || width}
     >
       <Box marginBottom={1}>
         <Text bold color={Colors.Foreground}>

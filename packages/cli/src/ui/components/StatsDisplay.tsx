@@ -193,7 +193,7 @@ export const StatsDisplay: React.FC<StatsDisplayProps> = ({
       flexDirection="column"
       paddingY={1}
       paddingX={2}
-      width={process.platform === 'win32' ? '48%' : '98%'}
+      width={process.env.WIDTH || '100%'}
     >
       {renderTitle()}
       <Box height={1} />

@@ -19,6 +19,17 @@ import {
   FunctionCall,
 } from '@google/genai';
 import { ContentGenerator } from './contentGenerator.js';
+import { Config } from '../config/config.js';
+import {
+  logApiRequest,
+  logApiResponse,
+  logApiError,
+} from '../telemetry/loggers.js';
+import {
+  ApiErrorEvent,
+  ApiRequestEvent,
+  ApiResponseEvent,
+} from '../telemetry/types.js';
 
 interface OpenAIMessage {
   role: 'system' | 'user' | 'assistant';
@@ -90,16 +101,19 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
   private readonly apiKey?: string;
   private readonly model: string;
   private readonly headers: Record<string, string>;
+  private readonly config?: Config;
 
   constructor(
     baseUrl: string,
     model: string,
     apiKey?: string,
     customHeaders?: Record<string, string>,
+    config?: Config,
   ) {
     this.baseUrl = baseUrl.replace(/\/$/, ''); // Remove trailing slash
     this.apiKey = apiKey;
     this.model = model;
+    this.config = config;
     this.headers = {
       'Content-Type': 'application/json',
       ...customHeaders,
@@ -306,9 +320,102 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
     });
   }
 
+  /**
+   * Extract text from Contents for logging purposes
+   */
+  private getRequestTextFromContents(contents: ContentListUnion): string {
+    const normalizedContents = this.normalizeContents(contents);
+    return normalizedContents
+      .flatMap((content) => content.parts ?? [])
+      .map((part) => part.text)
+      .filter(Boolean)
+      .join('');
+  }
+
+  /**
+   * Log API request
+   */
+  private logApiRequest(
+    contents: ContentListUnion,
+    model: string,
+    prompt_id: string,
+  ): void {
+    if (!this.config) return;
+    const requestText = this.getRequestTextFromContents(contents);
+    logApiRequest(
+      this.config,
+      new ApiRequestEvent(model, prompt_id, requestText),
+    );
+  }
+
+  /**
+   * Log API response
+   */
+  private logApiResponse(
+    durationMs: number,
+    prompt_id: string,
+    model: string,
+    usageTokens?: { prompt_tokens: number; completion_tokens: number; total_tokens: number },
+    responseText?: string,
+  ): void {
+    if (!this.config) return;
+    
+    // Convert OpenAI usage format to Gemini format
+    const usageMetadata = usageTokens ? {
+      promptTokenCount: usageTokens.prompt_tokens,
+      candidatesTokenCount: usageTokens.completion_tokens,
+      totalTokenCount: usageTokens.total_tokens,
+      cachedContentTokenCount: 0,
+      thoughtsTokenCount: 0,
+      toolTokenCount: 0,
+    } : undefined;
+
+    logApiResponse(
+      this.config,
+      new ApiResponseEvent(
+        model,
+        durationMs,
+        prompt_id,
+        usageMetadata,
+        responseText,
+      ),
+    );
+  }
+
+  /**
+   * Log API error
+   */
+  private logApiError(
+    durationMs: number,
+    prompt_id: string,
+    model: string,
+    error: Error,
+    statusCode?: number,
+  ): void {
+    if (!this.config) return;
+    logApiError(
+      this.config,
+      new ApiErrorEvent(
+        model,
+        error.message,
+        durationMs,
+        prompt_id,
+        error.constructor.name,
+        statusCode,
+      ),
+    );
+  }
+
   async generateContent(request: GenerateContentParameters): Promise<GenerateContentResponse> {
+    const startTime = Date.now();
+    const modelToUse = request.model || this.model;
+    const prompt_id = 'openai-generate-content'; // Fallback since we don't have access to prompt_id in this interface
+    
     // Extract system instruction from config
     const systemInstruction = this.extractTextFromContentUnion(request.config?.systemInstruction);
+
+    // Log the request
+    this.logApiRequest(request.contents, modelToUse, prompt_id);
 
     const messages = this.convertToOpenAIMessages(request.contents, systemInstruction);
 
@@ -324,7 +431,7 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
     }
 
     const openaiRequest: any = {
-      model: request.model || this.model,
+      model: modelToUse,
       messages,
       max_tokens: request.config?.maxOutputTokens || 4096,
       temperature: request.config?.temperature || 0.7,
@@ -338,26 +445,61 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
       openaiRequest.tool_choice = 'auto';
     }
 
-    const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: this.headers,
-      body: JSON.stringify(openaiRequest),
-      signal: request.config?.abortSignal,
-    });
+    try {
+      const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: this.headers,
+        body: JSON.stringify(openaiRequest),
+        signal: request.config?.abortSignal,
+      });
 
-    if (!response.ok) {
-      throw new Error(`OpenAI API error: ${response.status} ${response.statusText}`);
+      if (!response.ok) {
+        const durationMs = Date.now() - startTime;
+        const error = new Error(`OpenAI API error: ${response.status} ${response.statusText}`);
+        this.logApiError(durationMs, prompt_id, modelToUse, error, response.status);
+        throw error;
+      }
+
+      const openaiResponse: OpenAIResponse = await response.json();
+      const geminiResponse = this.convertToGeminiResponse(openaiResponse);
+      
+      // Log successful response
+      const durationMs = Date.now() - startTime;
+      const responseText = geminiResponse.candidates?.[0]?.content?.parts
+        ?.map(part => part.text)
+        .filter(Boolean)
+        .join('') || '';
+      
+      this.logApiResponse(
+        durationMs,
+        prompt_id,
+        modelToUse,
+        openaiResponse.usage,
+        responseText,
+      );
+
+      return geminiResponse;
+    } catch (error) {
+      const durationMs = Date.now() - startTime;
+      if (error instanceof Error) {
+        this.logApiError(durationMs, prompt_id, modelToUse, error);
+      }
+      throw error;
     }
-
-    const openaiResponse: OpenAIResponse = await response.json();
-    return this.convertToGeminiResponse(openaiResponse);
   }
 
   async generateContentStream(
     request: GenerateContentParameters,
   ): Promise<AsyncGenerator<GenerateContentResponse>> {
+    const startTime = Date.now();
+    const modelToUse = request.model || this.model;
+    const prompt_id = 'openai-generate-stream'; // Fallback since we don't have access to prompt_id in this interface
+    
     // Extract system instruction from config
     const systemInstruction = this.extractTextFromContentUnion(request.config?.systemInstruction);
+
+    // Log the request
+    this.logApiRequest(request.contents, modelToUse, prompt_id);
 
     const messages = this.convertToOpenAIMessages(request.contents, systemInstruction);
 
@@ -373,7 +515,7 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
     }
 
     const openaiRequest: any = {
-      model: request.model || this.model,
+      model: modelToUse,
       messages,
       max_tokens: request.config?.maxOutputTokens || 4096,
       temperature: request.config?.temperature || 0.7,
@@ -387,21 +529,38 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
       openaiRequest.tool_choice = 'auto';
     }
 
-    const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: this.headers,
-      body: JSON.stringify(openaiRequest),
-      signal: request.config?.abortSignal,
-    });
+    try {
+      const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: this.headers,
+        body: JSON.stringify(openaiRequest),
+        signal: request.config?.abortSignal,
+      });
 
-    if (!response.ok) {
-      throw new Error(`OpenAI API error: ${response.status} ${response.statusText}`);
+      if (!response.ok) {
+        const durationMs = Date.now() - startTime;
+        const error = new Error(`OpenAI API error: ${response.status} ${response.statusText}`);
+        this.logApiError(durationMs, prompt_id, modelToUse, error, response.status);
+        throw error;
+      }
+
+      // For streaming, we'll log the response when the stream completes
+      return this.parseStreamResponse(response, startTime, prompt_id, modelToUse);
+    } catch (error) {
+      const durationMs = Date.now() - startTime;
+      if (error instanceof Error) {
+        this.logApiError(durationMs, prompt_id, modelToUse, error);
+      }
+      throw error;
     }
-
-    return this.parseStreamResponse(response);
   }
 
-  private async *parseStreamResponse(response: Response): AsyncGenerator<GenerateContentResponse> {
+  private async *parseStreamResponse(
+    response: Response,
+    startTime: number,
+    prompt_id: string,
+    modelToUse: string,
+  ): AsyncGenerator<GenerateContentResponse> {
     const reader = response.body?.getReader();
     if (!reader) {
       throw new Error('No response body');
@@ -409,6 +568,7 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
 
     const decoder = new TextDecoder();
     let buffer = '';
+    let totalResponseText = '';
 
     try {
       while (true) {
@@ -424,6 +584,15 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
           if (trimmed.startsWith('data: ')) {
             const data = trimmed.slice(6);
             if (data === '[DONE]') {
+              // Log the completed streaming response
+              const durationMs = Date.now() - startTime;
+              this.logApiResponse(
+                durationMs,
+                prompt_id,
+                modelToUse,
+                undefined, // OpenAI streaming doesn't provide usage in individual chunks
+                totalResponseText,
+              );
               return;
             }
 
@@ -436,6 +605,7 @@ export class OpenAICompatibleGenerator implements ContentGenerator {
                 // Add text content if present
                 if (choice.delta.content) {
                   parts.push({ text: choice.delta.content });
+                  totalResponseText += choice.delta.content;
                 }
 
                 // Add function calls if present

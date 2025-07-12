@@ -345,7 +345,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         borderStyle="round"
         borderColor={shellModeActive ? Colors.AccentYellow : Colors.AccentBlue}
         paddingX={1}
-        width={process.platform === 'win32' ? '48%' : inputWidth}
+        width={process.env.WIDTH || inputWidth}
       >
         <Text
           color={shellModeActive ? Colors.AccentYellow : Colors.AccentPurple}
