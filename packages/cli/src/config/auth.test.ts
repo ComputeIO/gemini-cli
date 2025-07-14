@@ -67,6 +67,50 @@ describe('validateAuthMethod', () => {
     });
   });
 
+  describe('USE_OLLAMA', () => {
+    it('should return null for Ollama (no API key required)', () => {
+      expect(validateAuthMethod(AuthType.USE_OLLAMA)).toBeNull();
+    });
+  });
+
+  describe('USE_OPENAI', () => {
+    it('should return null if OPENAI_API_KEY is set', () => {
+      process.env.OPENAI_API_KEY = 'test-openai-key';
+      expect(validateAuthMethod(AuthType.USE_OPENAI)).toBeNull();
+    });
+
+    it('should return an error message if OPENAI_API_KEY is not set', () => {
+      expect(validateAuthMethod(AuthType.USE_OPENAI)).toBe(
+        'OPENAI_API_KEY environment variable not found. Add that to your environment and try again (no reload needed if using .env)!',
+      );
+    });
+  });
+
+  describe('USE_CUSTOM_OPENAI_COMPATIBLE', () => {
+    it('should return null if both CUSTOM_LLM_API_KEY and CUSTOM_LLM_BASE_URL are set', () => {
+      process.env.CUSTOM_LLM_API_KEY = 'test-custom-key';
+      process.env.CUSTOM_LLM_BASE_URL = 'https://custom-api.example.com';
+      expect(
+        validateAuthMethod(AuthType.USE_CUSTOM_OPENAI_COMPATIBLE),
+      ).toBeNull();
+    });
+
+    it('should return an error message if CUSTOM_LLM_API_KEY is not set', () => {
+      process.env.CUSTOM_LLM_BASE_URL = 'https://custom-api.example.com';
+      expect(validateAuthMethod(AuthType.USE_CUSTOM_OPENAI_COMPATIBLE)).toBe(
+        'CUSTOM_LLM_API_KEY environment variable not found. Add that to your environment and try again (no reload needed if using .env)!',
+      );
+    });
+
+    it('should return an error message if CUSTOM_LLM_BASE_URL is not set', () => {
+      process.env.CUSTOM_LLM_API_KEY = 'test-custom-key';
+      delete process.env.CUSTOM_LLM_BASE_URL;
+      expect(validateAuthMethod(AuthType.USE_CUSTOM_OPENAI_COMPATIBLE)).toBe(
+        'CUSTOM_LLM_BASE_URL environment variable not found. Add that to your environment and try again (no reload needed if using .env)!',
+      );
+    });
+  });
+
   it('should return an error message for an invalid auth method', () => {
     expect(validateAuthMethod('invalid-method')).toBe(
       'Invalid auth method selected.',

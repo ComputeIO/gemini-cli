@@ -514,7 +514,11 @@ export class GeminiClient {
         authType: this.config.getContentGeneratorConfig()?.authType,
       });
 
-      let text = getResponseText(result);
+      const facade =
+        typeof this.getContentGenerator().preprocess === 'function'
+          ? this.getContentGenerator().preprocess!
+          : (text: string) => text;
+      const text = facade(getResponseText(result));
       if (!text) {
         const error = new Error(
           'API returned an empty response for generateJson.',

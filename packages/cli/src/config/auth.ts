@@ -38,5 +38,30 @@ export const validateAuthMethod = (authMethod: string): string | null => {
     return null;
   }
 
+  if (authMethod === AuthType.USE_OLLAMA) {
+    // Ollama typically runs on localhost and might not require an API key
+    const _ollamaBaseUrl =
+      process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+    // We could add validation to check if Ollama is running, but for now just return null
+    return null;
+  }
+
+  if (authMethod === AuthType.USE_OPENAI) {
+    if (!process.env.OPENAI_API_KEY) {
+      return 'OPENAI_API_KEY environment variable not found. Add that to your environment and try again (no reload needed if using .env)!';
+    }
+    return null;
+  }
+
+  if (authMethod === AuthType.USE_CUSTOM_OPENAI_COMPATIBLE) {
+    if (!process.env.CUSTOM_LLM_API_KEY) {
+      return 'CUSTOM_LLM_API_KEY environment variable not found. Add that to your environment and try again (no reload needed if using .env)!';
+    }
+    if (!process.env.CUSTOM_LLM_BASE_URL) {
+      return 'CUSTOM_LLM_BASE_URL environment variable not found. Add that to your environment and try again (no reload needed if using .env)!';
+    }
+    return null;
+  }
+
   return 'Invalid auth method selected.';
 };
