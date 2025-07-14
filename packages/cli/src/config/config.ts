@@ -248,9 +248,7 @@ export async function loadCliConfig(
 ): Promise<Config> {
   const debugMode =
     argv.debug ||
-    [process.env.DEBUG, process.env.DEBUG_MODE].some(
-      (v) => v === 'true' || v === '1',
-    );
+    [process.env.DEBUG_MODE].some((v) => v === 'true' || v === '1');
 
   const ideMode =
     (argv.ideMode ?? settings.ideMode ?? false) &&
