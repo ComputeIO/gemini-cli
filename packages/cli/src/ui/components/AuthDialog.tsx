@@ -57,7 +57,13 @@ export function AuthDialog({
     ) {
       return 'Existing API key detected (GEMINI_API_KEY). Select "Gemini API Key" option to use it.';
     }
-    return null;
+    return process.env.OPENAI_API_KEY
+        ? 'Existing API key detected (OPENAI_API_KEY). Select "OpenAI" option to use it.'
+        : process.env.CUSTOM_LLM_API_KEY && process.env.CUSTOM_LLM_BASE_URL
+        ? 'Custom LLM configuration detected. Select "Custom OpenAI-Compatible" option to use it.'
+        : process.env.OLLAMA_BASE_URL
+        ? 'Ollama configuration detected. Select "Ollama (Local)" option to use it.'
+        : null;
   });
   const items = [
     {
@@ -77,6 +83,9 @@ export function AuthDialog({
       value: AuthType.USE_GEMINI,
     },
     { label: 'Vertex AI', value: AuthType.USE_VERTEX_AI },
+    { label: 'Ollama (Local)', value: AuthType.USE_OLLAMA },
+    { label: 'OpenAI', value: AuthType.USE_OPENAI },
+    { label: 'Custom OpenAI-Compatible', value: AuthType.USE_CUSTOM_OPENAI_COMPATIBLE },
   ];
 
   const initialAuthIndex = items.findIndex((item) => {
@@ -91,8 +100,19 @@ export function AuthDialog({
       return item.value === defaultAuthType;
     }
 
+    // Auto-detect based on environment variables
     if (process.env.GEMINI_API_KEY) {
       return item.value === AuthType.USE_GEMINI;
+    }
+    if (process.env.OPENAI_API_KEY) {
+      return item.value === AuthType.USE_OPENAI;
+    }
+    if (process.env.CUSTOM_LLM_API_KEY && process.env.CUSTOM_LLM_BASE_URL) {
+      return item.value === AuthType.USE_CUSTOM_OPENAI_COMPATIBLE;
+    }
+    // For Ollama, we'll default to it if the base URL is set or if it's running on localhost
+    if (process.env.OLLAMA_BASE_URL) {
+      return item.value === AuthType.USE_OLLAMA;
     }
 
     return item.value === AuthType.LOGIN_WITH_GOOGLE;
@@ -132,7 +152,7 @@ export function AuthDialog({
       borderColor={Colors.Gray}
       flexDirection="column"
       padding={1}
-      width="100%"
+      width={process.env.WIDTH || '100%'}
     >
       <Text bold>Get started</Text>
       <Box marginTop={1}>

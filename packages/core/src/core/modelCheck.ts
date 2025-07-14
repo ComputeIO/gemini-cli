@@ -8,6 +8,8 @@ import {
   DEFAULT_GEMINI_MODEL,
   DEFAULT_GEMINI_FLASH_MODEL,
 } from '../config/models.js';
+import { handleTimeoutError } from '../utils/timeoutErrorHandler.js';
+import { Config } from '../config/config.js';
 
 /**
  * Checks if the default "pro" model is rate-limited and returns a fallback "flash"
@@ -20,6 +22,7 @@ import {
 export async function getEffectiveModel(
   apiKey: string,
   currentConfiguredModel: string,
+  config?: Config,
 ): Promise<string> {
   if (currentConfiguredModel !== DEFAULT_GEMINI_MODEL) {
     // Only check if the user is trying to use the specific pro model we want to fallback from.
@@ -60,8 +63,14 @@ export async function getEffectiveModel(
     }
     // For any other case (success, other error codes), we stick to the original model.
     return currentConfiguredModel;
-  } catch (_error) {
+  } catch (error) {
     clearTimeout(timeoutId);
+    
+    // Handle timeout errors gracefully in debug mode
+    if (error instanceof Error) {
+      handleTimeoutError(error, config, 'Model availability check');
+    }
+    
     // On timeout or any other fetch error, stick to the original model.
     return currentConfiguredModel;
   }

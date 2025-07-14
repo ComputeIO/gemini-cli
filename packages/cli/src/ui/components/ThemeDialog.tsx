@@ -186,7 +186,7 @@ export function ThemeDialog({
       paddingBottom={includePadding ? 1 : 0}
       paddingLeft={1}
       paddingRight={1}
-      width="100%"
+      width={process.env.WIDTH || '100%'}
     >
       <Box flexDirection="row">
         {/* Left Column: Selection */}

@@ -15,6 +15,7 @@ import {
   createUserContent,
   Part,
   GenerateContentResponseUsageMetadata,
+  FinishReason,
 } from '@google/genai';
 import { retryWithBackoff } from '../utils/retry.js';
 import { isFunctionResponse } from '../utils/messageInspectors.js';
@@ -35,10 +36,11 @@ import {
   ApiResponseEvent,
 } from '../telemetry/types.js';
 import { DEFAULT_GEMINI_FLASH_MODEL } from '../config/models.js';
+import { handleTimeoutError } from '../utils/timeoutErrorHandler.js';
 
 /**
  * Returns true if the response is valid, false otherwise.
- */
+ */ 
 function isValidResponse(response: GenerateContentResponse): boolean {
   if (response.candidates === undefined || response.candidates.length === 0) {
     return false;
@@ -302,6 +304,11 @@ export class GeminiChat {
 
       response = await retryWithBackoff(apiCall, {
         shouldRetry: (error: Error) => {
+          // Handle timeout errors gracefully in debug mode
+          if (handleTimeoutError(error, this.config, 'Gemini API call')) {
+            return false; // Don't retry timeout errors in debug mode
+          }
+          
           if (error && error.message) {
             if (error.message.includes('429')) return true;
             if (error.message.match(/5\d{2}/)) return true;
@@ -347,6 +354,25 @@ export class GeminiChat {
       return response;
     } catch (error) {
       const durationMs = Date.now() - startTime;
+      
+      // Handle timeout errors gracefully in debug mode
+      if (error instanceof Error && handleTimeoutError(error, this.config, 'Gemini generateContent')) {
+        // Create a fallback response for timeout errors in debug mode
+        const fallbackResponse = new GenerateContentResponse();
+        fallbackResponse.candidates = [{
+          index: 0,
+          content: {
+            role: 'model',
+            parts: [{ text: '[Debug Mode] Request timed out, please try again.' }]
+          },
+          finishReason: FinishReason.OTHER,
+          safetyRatings: []
+        }];
+        
+        this.sendPromise = Promise.resolve();
+        return fallbackResponse;
+      }
+      
       this._logApiError(durationMs, error, prompt_id);
       this.sendPromise = Promise.resolve();
       throw error;
@@ -413,6 +439,11 @@ export class GeminiChat {
       // If errors occur mid-stream, this setup won't resume the stream; it will restart it.
       const streamResponse = await retryWithBackoff(apiCall, {
         shouldRetry: (error: Error) => {
+          // Handle timeout errors gracefully in debug mode
+          if (handleTimeoutError(error, this.config, 'Gemini streaming API call')) {
+            return false; // Don't retry timeout errors in debug mode
+          }
+          
           // Check error messages for status codes, or specific error names if known
           if (error && error.message) {
             if (error.message.includes('429')) return true;
@@ -441,6 +472,28 @@ export class GeminiChat {
       return result;
     } catch (error) {
       const durationMs = Date.now() - startTime;
+      
+      // Handle timeout errors gracefully in debug mode
+      if (error instanceof Error && handleTimeoutError(error, this.config, 'Gemini generateContentStream')) {
+        // Create a fallback generator for timeout errors in debug mode
+        const fallbackGenerator = async function* (): AsyncGenerator<GenerateContentResponse> {
+          const fallbackResponse = new GenerateContentResponse();
+          fallbackResponse.candidates = [{
+            index: 0,
+            content: {
+              role: 'model',
+              parts: [{ text: '[Debug Mode] Streaming request timed out, please try again.' }]
+            },
+            finishReason: FinishReason.OTHER,
+            safetyRatings: []
+          }];
+          yield fallbackResponse;
+        };
+        
+        this.sendPromise = Promise.resolve();
+        return fallbackGenerator();
+      }
+      
       this._logApiError(durationMs, error, prompt_id);
       this.sendPromise = Promise.resolve();
       throw error;
