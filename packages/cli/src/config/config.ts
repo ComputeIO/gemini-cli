@@ -271,14 +271,9 @@ export async function loadCliConfig(
 ): Promise<Config> {
   const debugMode =
     argv.debug ||
-    [process.env.DEBUG, process.env.DEBUG_MODE].some(
-      (v) => v === 'true' || v === '1',
-    ) ||
-    false;
-  const memoryImportFormat = settings.memoryImportFormat || 'tree';
-  const ideMode =
-    (argv.ideMode ?? settings.ideMode ?? false) &&
-    process.env.TERM_PROGRAM === 'vscode';
+    [process.env.DEBUG_MODE].some((v) => v === 'true' || v === '1');
+
+  const ideMode = settings.ideMode ?? false;
 
   const ideModeFeature =
     (argv.ideModeFeature ?? settings.ideModeFeature ?? false) &&
@@ -324,7 +319,7 @@ export async function loadCliConfig(
     fileService,
     settings,
     extensionContextFilePaths,
-    memoryImportFormat,
+    'flat',
     fileFiltering,
   );
 
